@@ -30,8 +30,8 @@ class ConversationSession:
         self.messages = []
         self.created_at = time.time()
         self.last_interaction = time.time()
-        self.user_topics = set()  # Track topics user mentions
-        self.user_name = None  # Remember if user shares name
+        self.user_topics = set()  
+        self.user_name = None  
         self.conversation_depth = 0
 
 conversation_sessions: Dict[str, ConversationSession] = {}
@@ -93,7 +93,6 @@ def analyze_user_message(message: str, session: ConversationSession) -> dict:
     
     message_lower = message.lower()
     
-    # Mood detection
     positive_indicators = ['happy', 'excited', 'love', 'amazing', 'great', 'wonderful']
     negative_indicators = ['sad', 'angry', 'frustrated', 'tired', 'stress', 'worried', 'annoyed']
     curious_indicators = ['why', 'how', 'what if', 'curious', 'wonder']
@@ -125,9 +124,7 @@ def analyze_user_message(message: str, session: ConversationSession) -> dict:
             analysis["potential_topics"].append(topic)
             session.user_topics.add(topic)
     
-    # Name detection (simple version)
     if "my name is" in message_lower or "i'm called" in message_lower or "i am " in message_lower:
-        # Extract name (simplified)
         words = message.split()
         for i, word in enumerate(words):
             if word.lower() in ["is", "called", "am"] and i + 1 < len(words):
@@ -141,7 +138,6 @@ def update_conversation_metrics(session: ConversationSession, analysis: dict):
     """Update session metrics based on conversation quality"""
     session.last_interaction = time.time()
     
-    # Increase conversation depth for meaningful exchanges
     if analysis["is_personal_share"]:
         session.conversation_depth = min(10, session.conversation_depth + 2)
     elif analysis["engagement_level"] == "high":
@@ -149,7 +145,6 @@ def update_conversation_metrics(session: ConversationSession, analysis: dict):
     elif analysis["engagement_level"] == "low":
         session.conversation_depth = max(0, session.conversation_depth - 0.5)
 
-# Store session IDs by client (simplified approach)
 client_sessions: Dict[str, str] = {}
 
 def get_client_session_id(request: Request) -> str:
@@ -197,21 +192,21 @@ async def chat(chat_request: ChatRequest, request: Request):
         session.messages.append({"role": "user", "content": chat_request.message})
         
         # Smart context management - keep conversation flowing naturally
-        max_messages = 15 + (session.conversation_depth * 1)  # More context for deeper conversations
+        max_messages = 15 + (session.conversation_depth * 1)  
         if len(session.messages) > max_messages:
             # Keep system, some early context, and recent messages
-            keep_messages = [session.messages[0]]  # System prompt
+            keep_messages = [session.messages[0]]  
             
             # Preserve important early exchanges if they exist
             if len(session.messages) > 6:
-                keep_messages.extend(session.messages[1:4])  # First few exchanges
+                keep_messages.extend(session.messages[1:4])  
             
             # Add recent messages
             keep_messages.extend(session.messages[-(max_messages - len(keep_messages)):])
             session.messages = keep_messages
         
         # Dynamic response parameters based on conversation
-        temperature = 0.7 + (session.conversation_depth * 0.03)  # More creative as conversation deepens
+        temperature = 0.7 + (session.conversation_depth * 0.03)  
         
         # Generate response with enhanced engagement
         response = client.chat.completions.create(
