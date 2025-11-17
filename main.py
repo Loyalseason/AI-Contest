@@ -1,28 +1,57 @@
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from openai import OpenAI
-import os
 from dotenv import load_dotenv
-from typing import Dict
+from typing import Dict, List
+import os
 import uuid
 import time
+import json
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+from datetime import datetime
+import numpy as np
+from collections import Counter, defaultdict
+import io
+import base64
 
 load_dotenv()
 
 app = FastAPI(
-    title="Group One Buddy - AI Chatbot",
-    description="An exceptionally engaging conversational AI with memory and personality",
+    title="AgriTech AI Advisor - Smart Farming Assistant",
+    description="An AI-powered agricultural advisor with analytics and prototyping capabilities",
     version="2.0.0"
 )
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Analytics Storage
+class Analytics:
+    def __init__(self):
+        self.conversation_logs = []
+        self.user_metrics = defaultdict(lambda: {
+            'session_count': 0,
+            'total_messages': 0,
+            'avg_conversation_depth': 0,
+            'topics_discussed': set(),
+            'engagement_levels': []
+        })
+        self.daily_stats = defaultdict(lambda: {
+            'conversations': 0,
+            'messages': 0,
+            'unique_users': set(),
+            'avg_response_time': 0
+        })
+        
+analytics = Analytics()
+
 class ChatbotPersonality:
     def __init__(self):
-        self.name = "Group One Buddy"
-        self.background = "I'm your friendly AI companion created for meaningful conversations. I love learning about people and sharing interesting perspectives."
-        self.interests = ["technology", "science", "philosophy", "music", "travel", "books", "personal growth"]
-        self.conversation_style = "warm, curious, and genuinely interested"
+        self.name = "AgriTech Advisor"
+        self.background = "I'm an AI agriculture specialist focused on modern farming techniques, IoT in agriculture, and sustainable practices."
+        self.expertise = ["precision agriculture", "crop management", "IoT sensors", "sustainable farming"]
+        self.conversation_style = "practical, knowledgeable, and supportive"
 
 class ConversationSession:
     def __init__(self, session_id: str):
@@ -30,9 +59,14 @@ class ConversationSession:
         self.messages = []
         self.created_at = time.time()
         self.last_interaction = time.time()
-        self.user_topics = set()  
-        self.user_name = None  
+        self.user_farming_type = None
+        self.user_region = None
+        self.farm_size = None
+        self.tech_interest_level = "beginner"
+        self.discussed_topics = set()
         self.conversation_depth = 0
+        self.response_times = []
+        self.message_lengths = []
 
 conversation_sessions: Dict[str, ConversationSession] = {}
 chatbot_personality = ChatbotPersonality()
@@ -45,186 +79,140 @@ class ChatResponse(BaseModel):
     session_id: str
     turn_count: int
     conversation_depth: int
+    specialization: str = "Agriculture Technology Advisor"
 
-def get_enhanced_system_prompt(session: ConversationSession) -> str:
-    """Create a dynamic system prompt that adapts to the conversation"""
+def log_conversation(session: ConversationSession, user_message: str, ai_response: str, response_time: float):
+    """Log conversation data for analytics"""
+    log_entry = {
+        'timestamp': datetime.now().isoformat(),
+        'session_id': session.session_id,
+        'user_message': user_message,
+        'ai_response': ai_response,
+        'response_time': response_time,
+        'conversation_depth': session.conversation_depth,
+        'farming_type': session.user_farming_type,
+        'farm_size': session.farm_size,
+        'tech_level': session.tech_interest_level,
+        'topics_discussed': list(session.discussed_topics),
+        'message_length': len(user_message)
+    }
+    analytics.conversation_logs.append(log_entry)
     
-    # Build context about what we know about the user
+    # Update daily stats
+    today = datetime.now().date().isoformat()
+    analytics.daily_stats[today]['conversations'] += 1
+    analytics.daily_stats[today]['messages'] += 2  # user + AI message
+    analytics.daily_stats[today]['unique_users'].add(session.session_id)
+    analytics.daily_stats[today]['avg_response_time'] = (
+        analytics.daily_stats[today]['avg_response_time'] + response_time
+    ) / 2
+
+def get_agritech_system_prompt(session: ConversationSession) -> str:
     user_context = ""
-    if session.user_name:
-        user_context += f"The user's name is {session.user_name}. "
-    if session.user_topics:
-        user_context += f"The user has shown interest in: {', '.join(list(session.user_topics)[-5:])}. "
+    if session.user_farming_type:
+        user_context += f"User's farming type: {session.user_farming_type}. "
+    if session.user_region:
+        user_context += f"Region: {session.user_region}. "
     
     return f"""You are {chatbot_personality.name}, {chatbot_personality.background}
 
-CORE PERSONALITY:
-- {chatbot_personality.conversation_style}
-- Naturally curious and empathetic
-- Great at active listening and meaningful follow-ups
-- Share relevant personal insights when appropriate
-- Remember and reference previous conversation details
-- Adapt your energy to match the user's tone
-
-CONVERSATION PRINCIPLES:
-1. Be genuinely interested in the user's thoughts and experiences
-2. Ask open-ended questions that encourage sharing
-3. Notice emotional cues and respond appropriately
-4. Build on previous topics naturally
-5. Share brief, relevant stories or analogies
-6. Use the user's name if they've shared it
-7. Vary response length based on context
-8. Use conversational fillers naturally ("I see", "That's interesting", "Tell me more")
+Expertise: {', '.join(chatbot_personality.expertise)}
+Conversation style: {chatbot_personality.conversation_style}
 
 {user_context}
-Current conversation depth: {session.conversation_depth}/10
+Tech interest level: {session.tech_interest_level}
 
-Make this feel like talking to a thoughtful, engaging friend who truly listens."""
+Provide practical, actionable advice for modern agriculture with focus on technology solutions."""
 
-def analyze_user_message(message: str, session: ConversationSession) -> dict:
-    """Analyze the user's message to improve response quality"""
+def analyze_agri_message(message: str, session: ConversationSession) -> dict:
     analysis = {
         "mood": "neutral",
         "engagement_level": "medium",
-        "contains_question": "?" in message,
-        "is_personal_share": False,
-        "potential_topics": []
+        "is_technical_question": False,
+        "agriculture_topics": []
     }
     
     message_lower = message.lower()
     
-    positive_indicators = ['happy', 'excited', 'love', 'amazing', 'great', 'wonderful']
-    negative_indicators = ['sad', 'angry', 'frustrated', 'tired', 'stress', 'worried', 'annoyed']
-    curious_indicators = ['why', 'how', 'what if', 'curious', 'wonder']
+    # Topic detection
+    topics = {
+        'crops': ['crop', 'yield', 'harvest', 'planting', 'soil', 'fertilizer'],
+        'iot': ['sensor', 'drone', 'iot', 'automation', 'data', 'monitoring'],
+        'sustainability': ['sustainable', 'organic', 'climate', 'environment'],
+        'water': ['irrigation', 'water', 'moisture', 'conservation'],
+        'livestock': ['livestock', 'cattle', 'poultry', 'animal']
+    }
     
-    if any(word in message_lower for word in positive_indicators):
-        analysis["mood"] = "positive"
-    elif any(word in message_lower for word in negative_indicators):
-        analysis["mood"] = "negative"
-    elif any(word in message_lower for word in curious_indicators):
-        analysis["mood"] = "curious"
+    for topic, keywords in topics.items():
+        if any(keyword in message_lower for keyword in keywords):
+            analysis["agriculture_topics"].append(topic)
+            session.discussed_topics.add(topic)
     
-    # Engagement level based on message depth
+    # Engagement analysis
     word_count = len(message.split())
     if word_count > 25:
         analysis["engagement_level"] = "high"
-    elif word_count < 5:
+    elif word_count < 4:
         analysis["engagement_level"] = "low"
     
-    # Personal share detection
-    personal_phrases = ['i feel', 'i think', 'my ', "i'm", "i am", 'me and', 'my family', 'my friend', 'i believe']
-    if any(phrase in message_lower for phrase in personal_phrases):
-        analysis["is_personal_share"] = True
-    
-    # Topic extraction
-    topics = ['work', 'school', 'family', 'friends', 'music', 'movie', 'book', 'game', 
-              'travel', 'food', 'sport', 'hobby', 'art', 'science', 'tech']
-    for topic in topics:
-        if topic in message_lower:
-            analysis["potential_topics"].append(topic)
-            session.user_topics.add(topic)
-    
-    if "my name is" in message_lower or "i'm called" in message_lower or "i am " in message_lower:
-        words = message.split()
-        for i, word in enumerate(words):
-            if word.lower() in ["is", "called", "am"] and i + 1 < len(words):
-                potential_name = words[i + 1].strip(".,!?")
-                if len(potential_name) > 1 and potential_name.lower() not in ["a", "the", "and", "but"]:
-                    session.user_name = potential_name
+    session.message_lengths.append(word_count)
     
     return analysis
 
-def update_conversation_metrics(session: ConversationSession, analysis: dict):
-    """Update session metrics based on conversation quality"""
-    session.last_interaction = time.time()
-    
-    if analysis["is_personal_share"]:
-        session.conversation_depth = min(10, session.conversation_depth + 2)
-    elif analysis["engagement_level"] == "high":
-        session.conversation_depth = min(10, session.conversation_depth + 1)
-    elif analysis["engagement_level"] == "low":
-        session.conversation_depth = max(0, session.conversation_depth - 0.5)
-
-client_sessions: Dict[str, str] = {}
-
-def get_client_session_id(request: Request) -> str:
-    """Get or create session ID for client"""
-    # Use client IP + user agent as identifier (simplified)
-    client_id = f"{request.client.host}-{request.headers.get('user-agent', '')}"
-    
-    if client_id not in client_sessions:
-        client_sessions[client_id] = str(uuid.uuid4())
-    
-    return client_sessions[client_id]
-
 @app.post("/chat", response_model=ChatResponse)
 async def chat(chat_request: ChatRequest, request: Request):
-    """
-    Advanced conversational chatbot endpoint - automatic session management
-    """
-    api_key = os.getenv("OPENAI_API_KEY")
+    start_time = time.time()
     
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     try:
-        # Automatic session management
-        session_id = get_client_session_id(request)
+        session_id = f"{request.client.host}-{request.headers.get('user-agent', '')}"
         
         if session_id not in conversation_sessions:
             conversation_sessions[session_id] = ConversationSession(session_id)
         
         session = conversation_sessions[session_id]
         
-        # Analyze user message for better contextual understanding
-        analysis = analyze_user_message(chat_request.message, session)
-        update_conversation_metrics(session, analysis)
+        # Analyze message
+        analysis = analyze_agri_message(chat_request.message, session)
         
-        # Initialize or update system message with current context
+        # Update conversation metrics
+        session.last_interaction = time.time()
+        if analysis["engagement_level"] == "high":
+            session.conversation_depth = min(10, session.conversation_depth + 1)
+        
+        # System prompt
         if not session.messages:
-            system_prompt = get_enhanced_system_prompt(session)
+            system_prompt = get_agritech_system_prompt(session)
             session.messages = [{"role": "system", "content": system_prompt}]
-        else:
-            # Update system prompt to reflect new context
-            session.messages[0]["content"] = get_enhanced_system_prompt(session)
         
-        # Add user message
         session.messages.append({"role": "user", "content": chat_request.message})
         
-        # Smart context management - keep conversation flowing naturally
-        max_messages = 15 + (session.conversation_depth * 1)  
+        # Context management
+        max_messages = 15
         if len(session.messages) > max_messages:
-            # Keep system, some early context, and recent messages
-            keep_messages = [session.messages[0]]  
-            
-            # Preserve important early exchanges if they exist
-            if len(session.messages) > 6:
-                keep_messages.extend(session.messages[1:4])  
-            
-            # Add recent messages
-            keep_messages.extend(session.messages[-(max_messages - len(keep_messages)):])
-            session.messages = keep_messages
+            session.messages = [session.messages[0]] + session.messages[-(max_messages-1):]
         
-        # Dynamic response parameters based on conversation
-        temperature = 0.7 + (session.conversation_depth * 0.03)  
-        
-        # Generate response with enhanced engagement
+        # Generate response
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=session.messages,
             max_tokens=400,
-            temperature=min(0.9, temperature),
-            presence_penalty=0.1,
-            frequency_penalty=0.1
+            temperature=0.8
         )
         
         ai_response = response.choices[0].message.content
-        
-        # Add AI response to history
         session.messages.append({"role": "assistant", "content": ai_response})
         
         # Calculate metrics
+        response_time = time.time() - start_time
+        session.response_times.append(response_time)
         turn_count = len([msg for msg in session.messages if msg["role"] == "user"])
+        
+        # Log conversation for analytics
+        log_conversation(session, chat_request.message, ai_response, response_time)
         
         return ChatResponse(
             response=ai_response,
@@ -235,6 +223,122 @@ async def chat(chat_request: ChatRequest, request: Request):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+
+# ANALYTICS ENDPOINTS
+@app.get("/analytics/overview")
+async def get_analytics_overview():
+    """Get overview analytics"""
+    total_conversations = len(analytics.conversation_logs)
+    unique_users = len(conversation_sessions)
+    
+    if analytics.conversation_logs:
+        avg_response_time = np.mean([log['response_time'] for log in analytics.conversation_logs])
+        avg_conversation_depth = np.mean([log['conversation_depth'] for log in analytics.conversation_logs])
+    else:
+        avg_response_time = avg_conversation_depth = 0
+    
+    return {
+        "total_conversations": total_conversations,
+        "unique_users": unique_users,
+        "average_response_time_seconds": round(avg_response_time, 2),
+        "average_conversation_depth": round(avg_conversation_depth, 2),
+        "data_collection_period": f"{len(analytics.daily_stats)} days"
+    }
+
+@app.get("/analytics/topics")
+async def get_topic_analytics():
+    """Get topic popularity analytics"""
+    all_topics = []
+    for log in analytics.conversation_logs:
+        all_topics.extend(log['topics_discussed'])
+    
+    topic_counts = Counter(all_topics)
+    return {
+        "topic_popularity": dict(topic_counts),
+        "most_popular_topic": topic_counts.most_common(1)[0] if topic_counts else "No data"
+    }
+
+@app.get("/analytics/visualization")
+async def get_analytics_visualization():
+    """Generate matplotlib visualizations"""
+    if not analytics.conversation_logs:
+        return {"error": "No conversation data available"}
+    
+    # Create visualizations
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # 1. Response Time Distribution
+    response_times = [log['response_time'] for log in analytics.conversation_logs]
+    ax1.hist(response_times, bins=20, alpha=0.7, color='skyblue')
+    ax1.set_title('Response Time Distribution')
+    ax1.set_xlabel('Response Time (seconds)')
+    ax1.set_ylabel('Frequency')
+    
+    # 2. Topic Popularity
+    all_topics = []
+    for log in analytics.conversation_logs:
+        all_topics.extend(log['topics_discussed'])
+    topic_counts = Counter(all_topics)
+    
+    if topic_counts:
+        topics, counts = zip(*topic_counts.most_common())
+        ax2.bar(topics, counts, color='lightgreen')
+        ax2.set_title('Popular Agriculture Topics')
+        ax2.tick_params(axis='x', rotation=45)
+    
+    # 3. Conversation Depth Distribution
+    depths = [log['conversation_depth'] for log in analytics.conversation_logs]
+    ax3.hist(depths, bins=10, alpha=0.7, color='orange')
+    ax3.set_title('Conversation Depth Distribution')
+    ax3.set_xlabel('Conversation Depth')
+    ax3.set_ylabel('Frequency')
+    
+    # 4. Message Length Distribution
+    message_lengths = [log['message_length'] for log in analytics.conversation_logs]
+    ax4.hist(message_lengths, bins=20, alpha=0.7, color='purple')
+    ax4.set_title('User Message Length Distribution')
+    ax4.set_xlabel('Message Length (characters)')
+    ax4.set_ylabel('Frequency')
+    
+    plt.tight_layout()
+    
+    # Save plot to bytes
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plot_data = base64.b64encode(buf.getvalue()).decode('utf-8')
+    plt.close()
+    
+    return {
+        "plot": f"data:image/png;base64,{plot_data}",
+        "description": "Analytics dashboard showing response times, topic popularity, conversation depth, and message lengths"
+    }
+
+@app.get("/analytics/export")
+async def export_analytics_data():
+    """Export analytics data as JSON"""
+    return {
+        "conversation_logs": analytics.conversation_logs,
+        "daily_stats": dict(analytics.daily_stats),
+        "summary": {
+            "total_conversations": len(analytics.conversation_logs),
+            "unique_sessions": len(conversation_sessions),
+            "data_collection_start": min([log['timestamp'] for log in analytics.conversation_logs]) if analytics.conversation_logs else "No data"
+        }
+    }
+
+@app.get("/")
+async def root():
+    return {
+        "message": "AgriTech AI Advisor with Analytics",
+        "endpoints": {
+            "chat": "/chat (POST)",
+            "analytics_overview": "/analytics/overview",
+            "topic_analytics": "/analytics/topics", 
+            "visualizations": "/analytics/visualization",
+            "data_export": "/analytics/export"
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn
