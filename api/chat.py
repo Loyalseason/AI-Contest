@@ -1,8 +1,14 @@
+# chat.py - Corrected Chat Router
 import os
+import time
+import uuid
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from schemas.schema_chat import ChatRequest
+
+# Import analytics
+from api.analytics import log_conversation, conversation_sessions, ConversationSession
 
 router = APIRouter()
 
@@ -13,29 +19,40 @@ def chat(data: ChatRequest):
         raise HTTPException(status_code=500, detail="Missing OPENAI_API_KEY")
 
     client = OpenAI(api_key=api_key)
+    start_time = time.time()
 
-    # Streaming generator
+    # Session management
+    session_id = getattr(data, 'session_id', None) or str(uuid.uuid4())
+    if session_id not in conversation_sessions:
+        conversation_sessions[session_id] = ConversationSession(session_id)
+
+    # Get user message
+    user_message = next((msg.content for msg in data.messages if msg.role == "user"), "")
+
+    # Streaming response
     def stream():
+        full_response = ""
         try:
             response = client.chat.completions.create(
                 model=data.model,
-                messages=data.messages,
+                messages=[{"role": msg.role, "content": msg.content} for msg in data.messages],
                 stream=True,
             )
+            
             for chunk in response:
-                # chunk.choices is a list; take the first choice
-                print("DEBUG delta:", chunk.choices[0].delta)  # check this shows up
                 choice = chunk.choices[0]
                 delta = choice.delta
-
-                # Some chunks (e.g. role init / final) may have no content
-                if delta is not None and getattr(delta, "content", None):
-                    # delta.content is a plain string
-                    yield delta.content
+                
+                if delta and getattr(delta, "content", None):
+                    content = delta.content
+                    full_response += content
+                    yield content
+                    
+            # Log after complete response WITH MODEL PARAMETER
+            response_time = time.time() - start_time
+            log_conversation(session_id, user_message, full_response, response_time, data.model)
+            
         except Exception as e:
-            # This is what you see as "Error: 'ChoiceDelta' object has no attribute 'get'"
             yield f"Error: {str(e)}"
 
-
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(stream(), media_type="text/plain")

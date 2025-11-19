@@ -1,12 +1,12 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api import chat, analytics
 from dotenv import load_dotenv
 
 def get_application():
     _app = FastAPI(
-        title="AgriTech AI Advisor - Smart Farming Assistant",
-        description="An AI-powered agricultural advisor with analytics and prototyping capabilities",
+        title="AgriTech AI Advisor",
+        description="AI-powered agricultural advisor",
         version="2.0.0"
     )
     _app.add_middleware(
@@ -16,7 +16,6 @@ def get_application():
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
     return _app
 
 app = get_application()
@@ -25,16 +24,14 @@ load_dotenv()
 @app.get("/")
 async def root():
     return {
-        "message": "AgriTech AI Advisor with Analytics",
+        "message": "AgriTech AI Advisor",
         "endpoints": {
-            "chat": "/chat (POST)",
-            "analytics_overview": "/analytics/overview",
-            "topic_analytics": "/analytics/topics", 
-            "visualizations": "/analytics/visualization",
-            "data_export": "/analytics/export"
+            "chat": "POST /chat/answer",
+            "analytics": "GET /analytics/dashboard"
         }
     }
 
+# Only 2 routers needed
 app.include_router(chat.router, prefix="/chat")
 app.include_router(analytics.router, prefix="/analytics")
 

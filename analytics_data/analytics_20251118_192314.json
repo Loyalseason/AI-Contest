@@ -1,0 +1,177 @@
+{
+  "timestamp": "2025-11-18T19:23:14.298256",
+  "total_conversations": 11,
+  "unique_sessions": 9,
+  "conversation_logs": [
+    {
+      "timestamp": "2025-11-18T19:16:44.330696",
+      "session_id": "6116c18",
+      "user_message_length": 73,
+      "ai_response_length": 2412,
+      "response_time": 11.170284509658813,
+      "topics": [
+        "crops",
+        "iot_tech"
+      ],
+      "model": "gpt-4o",
+      "estimated_tokens": 621,
+      "response_quality_score": 9.5
+    },
+    {
+      "timestamp": "2025-11-18T19:17:52.618516",
+      "session_id": "ce90642",
+      "user_message_length": 49,
+      "ai_response_length": 1648,
+      "response_time": 4.187041521072388,
+      "topics": [
+        "crops"
+      ],
+      "model": "gpt-3.5-turbo",
+      "estimated_tokens": 424,
+      "response_quality_score": 9.0
+    },
+    {
+      "timestamp": "2025-11-18T19:18:12.468553",
+      "session_id": "ee88e54",
+      "user_message_length": 82,
+      "ai_response_length": 1379,
+      "response_time": 6.770864963531494,
+      "topics": [
+        "water"
+      ],
+      "model": "gpt-4o",
+      "estimated_tokens": 364,
+      "response_quality_score": 9.0
+    },
+    {
+      "timestamp": "2025-11-18T19:18:27.392249",
+      "session_id": "ee88e54",
+      "user_message_length": 82,
+      "ai_response_length": 1593,
+      "response_time": 5.413762331008911,
+      "topics": [
+        "water"
+      ],
+      "model": "gpt-4o",
+      "estimated_tokens": 418,
+      "response_quality_score": 8.5
+    },
+    {
+      "timestamp": "2025-11-18T19:18:37.385375",
+      "session_id": "d39be95",
+      "user_message_length": 83,
+      "ai_response_length": 1037,
+      "response_time": 2.476635217666626,
+      "topics": [
+        "sustainability",
+        "pest_disease"
+      ],
+      "model": "gpt-3.5-turbo",
+      "estimated_tokens": 279,
+      "response_quality_score": 6.5
+    },
+    {
+      "timestamp": "2025-11-18T19:20:36.171574",
+      "session_id": "farm_drone_001",
+      "user_message_length": 83,
+      "ai_response_length": 2059,
+      "response_time": 8.738922119140625,
+      "topics": [
+        "iot_tech"
+      ],
+      "model": "gpt-4o",
+      "estimated_tokens": 534,
+      "response_quality_score": 9.5
+    },
+    {
+      "timestamp": "2025-11-18T19:20:45.939320",
+      "session_id": "soil_health_002",
+      "user_message_length": 64,
+      "ai_response_length": 1134,
+      "response_time": 1.9806525707244873,
+      "topics": [
+        "crops"
+      ],
+      "model": "gpt-3.5-turbo",
+      "estimated_tokens": 299,
+      "response_quality_score": 7.5
+    },
+    {
+      "timestamp": "2025-11-18T19:21:14.984700",
+      "session_id": "livestock_tech_003",
+      "user_message_length": 70,
+      "ai_response_length": 2264,
+      "response_time": 8.321418523788452,
+      "topics": [
+        "iot_tech",
+        "livestock"
+      ],
+      "model": "gpt-4o",
+      "estimated_tokens": 583,
+      "response_quality_score": 9.0
+    },
+    {
+      "timestamp": "2025-11-18T19:21:23.249115",
+      "session_id": "climate_drought_004",
+      "user_message_length": 104,
+      "ai_response_length": 1093,
+      "response_time": 3.3615317344665527,
+      "topics": [
+        "crops",
+        "sustainability",
+        "water"
+      ],
+      "model": "gpt-3.5-turbo",
+      "estimated_tokens": 299,
+      "response_quality_score": 8.0
+    },
+    {
+      "timestamp": "2025-11-18T19:21:41.782665",
+      "session_id": "storage_market_005",
+      "user_message_length": 92,
+      "ai_response_length": 1698,
+      "response_time": 8.64121699333191,
+      "topics": [
+        "crops"
+      ],
+      "model": "gpt-4o",
+      "estimated_tokens": 447,
+      "response_quality_score": 7.0
+    },
+    {
+      "timestamp": "2025-11-18T19:22:12.021534",
+      "session_id": "storage_market_005",
+      "user_message_length": 92,
+      "ai_response_length": 1846,
+      "response_time": 7.885039567947388,
+      "topics": [
+        "crops"
+      ],
+      "model": "gpt-4o",
+      "estimated_tokens": 484,
+      "response_quality_score": 7.5
+    }
+  ],
+  "topic_summary": {
+    "crops": 6,
+    "iot_tech": 3,
+    "water": 3,
+    "sustainability": 2,
+    "pest_disease": 1,
+    "livestock": 1
+  },
+  "model_performance": {
+    "gpt-4o": {
+      "total_calls": 7,
+      "total_response_time": 56.94150900840759,
+      "avg_response_time": 8.13450128691537,
+      "total_tokens_estimated": 3451
+    },
+    "gpt-3.5-turbo": {
+      "total_calls": 4,
+      "total_response_time": 12.005861043930054,
+      "avg_response_time": 3.0014652609825134,
+      "total_tokens_estimated": 1301
+    }
+  }
+}

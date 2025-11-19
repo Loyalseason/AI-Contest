@@ -1,247 +1,273 @@
-# Analytics Storage
-from pydantic import BaseModel
-from openai import OpenAI
-from dotenv import load_dotenv
-from typing import Dict, List
+from fastapi import APIRouter
 from datetime import datetime
 from collections import Counter, defaultdict
-
-import time
 import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
 import numpy as np
-import io
-import base64
-
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse, StreamingResponse
+import os
+from pathlib import Path
+import json
 
 router = APIRouter()
+
+# Create analytics directory
+ANALYTICS_DIR = Path("analytics_plots")
+DATA_DIR = Path("analytics_data")
+ANALYTICS_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(exist_ok=True)
 
 class Analytics:
     def __init__(self):
         self.conversation_logs = []
-        self.user_metrics = defaultdict(lambda: {
-            'session_count': 0,
-            'total_messages': 0,
-            'avg_conversation_depth': 0,
-            'topics_discussed': set(),
-            'engagement_levels': []
-        })
-        self.daily_stats = defaultdict(lambda: {
-            'conversations': 0,
-            'messages': 0,
-            'unique_users': set(),
-            'avg_response_time': 0
+        self.topic_counter = Counter()
+        self.model_metrics = defaultdict(lambda: {
+            'total_calls': 0,
+            'total_response_time': 0,
+            'avg_response_time': 0,
+            'total_tokens_estimated': 0
         })
         
 analytics = Analytics()
-
-class ChatbotPersonality:
-    def __init__(self):
-        self.name = "AgriTech Advisor"
-        self.background = "I'm an AI agriculture specialist focused on modern farming techniques, IoT in agriculture, and sustainable practices."
-        self.expertise = ["precision agriculture", "crop management", "IoT sensors", "sustainable farming"]
-        self.conversation_style = "practical, knowledgeable, and supportive"
 
 class ConversationSession:
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.messages = []
-        self.created_at = time.time()
-        self.last_interaction = time.time()
-        self.user_farming_type = None
-        self.user_region = None
-        self.farm_size = None
-        self.tech_interest_level = "beginner"
         self.discussed_topics = set()
         self.conversation_depth = 0
-        self.response_times = []
-        self.message_lengths = []
 
-conversation_sessions: Dict[str, ConversationSession] = {}
-chatbot_personality = ChatbotPersonality()
+conversation_sessions = {}
 
-def log_conversation(session: ConversationSession, user_message: str, ai_response: str, response_time: float):
-    """Log conversation data for analytics"""
+def log_conversation(session_id: str, user_message: str, ai_response: str, response_time: float, model: str = "unknown"):
+    """Log conversation with topic detection and model tracking"""
+    
+    # Detect topics
+    topics = detect_topics(user_message)
+    
+    # Estimate tokens (rough approximation: 1 token ~ 4 characters)
+    estimated_input_tokens = len(user_message) // 4
+    estimated_output_tokens = len(ai_response) // 4
+    total_tokens = estimated_input_tokens + estimated_output_tokens
+    
+    # Analyze response quality indicators
+    response_quality = analyze_response_quality(user_message, ai_response)
+    
     log_entry = {
         'timestamp': datetime.now().isoformat(),
-        'session_id': session.session_id,
-        'user_message': user_message,
-        'ai_response': ai_response,
+        'session_id': session_id,
+        'user_message_length': len(user_message),
+        'ai_response_length': len(ai_response),
         'response_time': response_time,
-        'conversation_depth': session.conversation_depth,
-        'farming_type': session.user_farming_type,
-        'farm_size': session.farm_size,
-        'tech_level': session.tech_interest_level,
-        'topics_discussed': list(session.discussed_topics),
-        'message_length': len(user_message)
+        'topics': topics,
+        'model': model,
+        'estimated_tokens': total_tokens,
+        'response_quality_score': response_quality
     }
+    
     analytics.conversation_logs.append(log_entry)
+    analytics.topic_counter.update(topics)
     
-    # Update daily stats
-    today = datetime.now().date().isoformat()
-    analytics.daily_stats[today]['conversations'] += 1
-    analytics.daily_stats[today]['messages'] += 2  # user + AI message
-    analytics.daily_stats[today]['unique_users'].add(session.session_id)
-    analytics.daily_stats[today]['avg_response_time'] = (
-        analytics.daily_stats[today]['avg_response_time'] + response_time
-    ) / 2
-
-def get_agritech_system_prompt(session: ConversationSession) -> str:
-    user_context = ""
-    if session.user_farming_type:
-        user_context += f"User's farming type: {session.user_farming_type}. "
-    if session.user_region:
-        user_context += f"Region: {session.user_region}. "
+    # Update model metrics
+    model_stats = analytics.model_metrics[model]
+    model_stats['total_calls'] += 1
+    model_stats['total_response_time'] += response_time
+    model_stats['avg_response_time'] = model_stats['total_response_time'] / model_stats['total_calls']
+    model_stats['total_tokens_estimated'] += total_tokens
     
-    return f"""You are {chatbot_personality.name}, {chatbot_personality.background}
-
-Expertise: {', '.join(chatbot_personality.expertise)}
-Conversation style: {chatbot_personality.conversation_style}
-
-{user_context}
-Tech interest level: {session.tech_interest_level}
-
-Provide practical, actionable advice for modern agriculture with focus on technology solutions."""
-
-def analyze_agri_message(message: str, session: ConversationSession) -> dict:
-    analysis = {
-        "mood": "neutral",
-        "engagement_level": "medium",
-        "is_technical_question": False,
-        "agriculture_topics": []
-    }
+    # Update session
+    if session_id in conversation_sessions:
+        conversation_sessions[session_id].discussed_topics.update(topics)
+        conversation_sessions[session_id].conversation_depth += 1
     
+    # Save to JSON file periodically (every 10 conversations)
+    if len(analytics.conversation_logs) % 10 == 0:
+        save_analytics_to_json()
+
+def analyze_response_quality(user_message: str, ai_response: str) -> float:
+    """
+    Estimate response quality based on heuristics
+    Returns score from 0-10
+    """
+    score = 5.0  # baseline
+    
+    # Check if response is too short (likely poor quality)
+    if len(ai_response) < 50:
+        score -= 2
+    
+    # Check if response is appropriately detailed
+    if len(ai_response) > 200:
+        score += 1
+    
+    # Check if response contains technical terms (for agriculture)
+    technical_terms = ['crop', 'soil', 'yield', 'fertilizer', 'irrigation', 
+                      'sensor', 'data', 'monitoring', 'precision', 'sustainable']
+    
+    found_terms = sum(1 for term in technical_terms if term in ai_response.lower())
+    score += min(found_terms * 0.5, 3)  # max 3 points for technical terms
+    
+    # Check response/question ratio (good responses are usually longer)
+    ratio = len(ai_response) / max(len(user_message), 1)
+    if 2 <= ratio <= 5:
+        score += 1
+    
+    # Check if response seems to answer a question
+    if '?' in user_message and len(ai_response) > 100:
+        score += 0.5
+    
+    return min(max(score, 0), 10)  # clamp between 0-10
+
+def detect_topics(message: str) -> list:
+    """Detect agriculture topics in message"""
     message_lower = message.lower()
     
-    # Topic detection
-    topics = {
-        'crops': ['crop', 'yield', 'harvest', 'planting', 'soil', 'fertilizer'],
-        'iot': ['sensor', 'drone', 'iot', 'automation', 'data', 'monitoring'],
-        'sustainability': ['sustainable', 'organic', 'climate', 'environment'],
-        'water': ['irrigation', 'water', 'moisture', 'conservation'],
-        'livestock': ['livestock', 'cattle', 'poultry', 'animal']
+    topics_keywords = {
+        'crops': ['crop', 'yield', 'harvest', 'planting', 'soil', 'fertilizer', 'seed'],
+        'iot_tech': ['sensor', 'drone', 'iot', 'automation', 'data', 'monitoring', 'technology'],
+        'sustainability': ['sustainable', 'organic', 'climate', 'environment', 'eco'],
+        'water': ['irrigation', 'water', 'moisture', 'conservation', 'drought'],
+        'livestock': ['livestock', 'cattle', 'poultry', 'animal', 'dairy'],
+        'pest_disease': ['pest', 'disease', 'insect', 'fungus', 'weed']
     }
     
-    for topic, keywords in topics.items():
+    detected = []
+    for topic, keywords in topics_keywords.items():
         if any(keyword in message_lower for keyword in keywords):
-            analysis["agriculture_topics"].append(topic)
-            session.discussed_topics.add(topic)
+            detected.append(topic)
     
-    # Engagement analysis
-    word_count = len(message.split())
-    if word_count > 25:
-        analysis["engagement_level"] = "high"
-    elif word_count < 4:
-        analysis["engagement_level"] = "low"
-    
-    session.message_lengths.append(word_count)
-    
-    return analysis
+    return detected if detected else ['general']
 
-
-
-# ANALYTICS ENDPOINTS
-@router.get("/overview")
-async def get_analytics_overview():
-    """Get overview analytics"""
-    total_conversations = len(analytics.conversation_logs)
-    unique_users = len(conversation_sessions)
+def save_analytics_to_json():
+    """Save analytics data to JSON file"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = DATA_DIR / f"analytics_{timestamp}.json"
     
-    if analytics.conversation_logs:
-        avg_response_time = np.mean([log['response_time'] for log in analytics.conversation_logs])
-        avg_conversation_depth = np.mean([log['conversation_depth'] for log in analytics.conversation_logs])
-    else:
-        avg_response_time = avg_conversation_depth = 0
-    
-    return {
-        "total_conversations": total_conversations,
-        "unique_users": unique_users,
-        "average_response_time_seconds": round(avg_response_time, 2),
-        "average_conversation_depth": round(avg_conversation_depth, 2),
-        "data_collection_period": f"{len(analytics.daily_stats)} days"
+    data = {
+        'timestamp': datetime.now().isoformat(),
+        'total_conversations': len(analytics.conversation_logs),
+        'unique_sessions': len(conversation_sessions),
+        'conversation_logs': analytics.conversation_logs,
+        'topic_summary': dict(analytics.topic_counter),
+        'model_performance': dict(analytics.model_metrics)
     }
-
-@router.get("/topics")
-async def get_topic_analytics():
-    """Get topic popularity analytics"""
-    all_topics = []
-    for log in analytics.conversation_logs:
-        all_topics.extend(log['topics_discussed'])
     
-    topic_counts = Counter(all_topics)
-    return {
-        "topic_popularity": dict(topic_counts),
-        "most_popular_topic": topic_counts.most_common(1)[0] if topic_counts else "No data"
-    }
+    with open(filepath, 'w') as f:
+        json.dump(data, f, indent=2)
+    
+    return filepath
 
-@router.get("/visualization")
-async def get_analytics_visualization():
-    """Generate matplotlib visualizations"""
+@router.get("/dashboard")
+async def get_analytics_dashboard():
+    """Get comprehensive analytics dashboard with visualization"""
+    
     if not analytics.conversation_logs:
-        return {"error": "No conversation data available"}
+        return {
+            "status": "No data yet",
+            "total_conversations": 0
+        }
     
-    # Create visualizations
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+    # Calculate metrics
+    total_conversations = len(analytics.conversation_logs)
+    unique_sessions = len(conversation_sessions)
+    avg_response_time = np.mean([log['response_time'] for log in analytics.conversation_logs])
+    avg_quality_score = np.mean([log['response_quality_score'] for log in analytics.conversation_logs])
     
-    # 1. Response Time Distribution
-    response_times = [log['response_time'] for log in analytics.conversation_logs]
-    ax1.hist(response_times, bins=20, alpha=0.7, color='skyblue')
-    ax1.set_title('Response Time Distribution')
-    ax1.set_xlabel('Response Time (seconds)')
-    ax1.set_ylabel('Frequency')
+    # Topic analysis
+    top_topics = analytics.topic_counter.most_common(5)
     
-    # 2. Topic Popularity
-    all_topics = []
-    for log in analytics.conversation_logs:
-        all_topics.extend(log['topics_discussed'])
-    topic_counts = Counter(all_topics)
+    # Model performance summary
+    model_summary = {}
+    for model, stats in analytics.model_metrics.items():
+        model_summary[model] = {
+            'total_calls': stats['total_calls'],
+            'avg_response_time': round(stats['avg_response_time'], 2),
+            'estimated_total_tokens': stats['total_tokens_estimated']
+        }
     
-    if topic_counts:
-        topics, counts = zip(*topic_counts.most_common())
-        ax2.bar(topics, counts, color='lightgreen')
-        ax2.set_title('Popular Agriculture Topics')
-        ax2.tick_params(axis='x', rotation=45)
+    # Generate and save visualization
+    plot_path = generate_dashboard_plot()
     
-    # 3. Conversation Depth Distribution
-    depths = [log['conversation_depth'] for log in analytics.conversation_logs]
-    ax3.hist(depths, bins=10, alpha=0.7, color='orange')
-    ax3.set_title('Conversation Depth Distribution')
-    ax3.set_xlabel('Conversation Depth')
+    # Save current state to JSON
+    json_path = save_analytics_to_json()
+    
+    return {
+        "summary": {
+            "total_conversations": total_conversations,
+            "unique_users": unique_sessions,
+            "avg_response_time_seconds": round(avg_response_time, 2),
+            "avg_response_quality_score": round(avg_quality_score, 2),
+            "most_popular_topics": [{"topic": topic, "count": count} for topic, count in top_topics]
+        },
+        "model_performance": model_summary,
+        "visualization_saved": str(plot_path),
+        "data_saved": str(json_path),
+        "topics_breakdown": dict(analytics.topic_counter)
+    }
+
+def generate_dashboard_plot():
+    """Generate and save analytics visualization"""
+    
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+    
+    # 1. Topic Popularity Bar Chart
+    if analytics.topic_counter:
+        topics, counts = zip(*analytics.topic_counter.most_common(6))
+        ax1.barh(topics, counts, color='#4CAF50')
+        ax1.set_xlabel('Number of Mentions')
+        ax1.set_title('Most Discussed Agriculture Topics')
+        ax1.invert_yaxis()
+    
+    # 2. Response Time Trend
+    response_times = [log['response_time'] for log in analytics.conversation_logs[-50:]]
+    ax2.plot(response_times, marker='o', linestyle='-', linewidth=2, markersize=4, color='#2196F3')
+    ax2.axhline(y=np.mean(response_times), color='red', linestyle='--', 
+                label=f'Avg: {np.mean(response_times):.2f}s')
+    ax2.set_xlabel('Conversation Number')
+    ax2.set_ylabel('Response Time (seconds)')
+    ax2.set_title('Response Time Trends')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # 3. Response Quality Score Distribution
+    quality_scores = [log['response_quality_score'] for log in analytics.conversation_logs]
+    ax3.hist(quality_scores, bins=20, alpha=0.7, color='#FF9800', edgecolor='black')
+    ax3.axvline(x=np.mean(quality_scores), color='red', linestyle='--', 
+                label=f'Avg: {np.mean(quality_scores):.2f}')
+    ax3.set_xlabel('Quality Score (0-10)')
     ax3.set_ylabel('Frequency')
+    ax3.set_title('Response Quality Distribution')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
     
-    # 4. Message Length Distribution
-    message_lengths = [log['message_length'] for log in analytics.conversation_logs]
-    ax4.hist(message_lengths, bins=20, alpha=0.7, color='purple')
-    ax4.set_title('User Message Length Distribution')
-    ax4.set_xlabel('Message Length (characters)')
-    ax4.set_ylabel('Frequency')
+    # 4. Model Usage Comparison (if multiple models)
+    if len(analytics.model_metrics) > 0:
+        models = list(analytics.model_metrics.keys())
+        calls = [analytics.model_metrics[m]['total_calls'] for m in models]
+        avg_times = [analytics.model_metrics[m]['avg_response_time'] for m in models]
+        
+        x = np.arange(len(models))
+        width = 0.35
+        
+        ax4_twin = ax4.twinx()
+        bars1 = ax4.bar(x - width/2, calls, width, label='Total Calls', color='#9C27B0')
+        bars2 = ax4_twin.bar(x + width/2, avg_times, width, label='Avg Response Time', color='#FFC107')
+        
+        ax4.set_xlabel('Model')
+        ax4.set_ylabel('Total Calls', color='#9C27B0')
+        ax4_twin.set_ylabel('Avg Response Time (s)', color='#FFC107')
+        ax4.set_title('Model Performance Comparison')
+        ax4.set_xticks(x)
+        ax4.set_xticklabels(models, rotation=45, ha='right')
+        ax4.legend(loc='upper left')
+        ax4_twin.legend(loc='upper right')
+    else:
+        ax4.text(0.5, 0.5, 'Not enough model data', ha='center', va='center')
+        ax4.set_title('Model Performance Comparison')
     
     plt.tight_layout()
     
-    # Save plot to bytes
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    buf.seek(0)
-    plot_data = base64.b64encode(buf.getvalue()).decode('utf-8')
+    # Save with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plot_path = ANALYTICS_DIR / f"analytics_dashboard_{timestamp}.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    return {
-        "plot": f"data:image/png;base64,{plot_data}",
-        "description": "Analytics dashboard showing response times, topic popularity, conversation depth, and message lengths"
-    }
-
-@router.get("/export")
-async def export_analytics_data():
-    """Export analytics data as JSON"""
-    return {
-        "conversation_logs": analytics.conversation_logs,
-        "daily_stats": dict(analytics.daily_stats),
-        "summary": {
-            "total_conversations": len(analytics.conversation_logs),
-            "unique_sessions": len(conversation_sessions),
-            "data_collection_start": min([log['timestamp'] for log in analytics.conversation_logs]) if analytics.conversation_logs else "No data"
-        }
-    }
+    return plot_path
