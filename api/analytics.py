@@ -10,8 +10,8 @@ import json
 router = APIRouter()
 
 # Create analytics directory
-ANALYTICS_DIR = Path("analytics_plots")
-DATA_DIR = Path("analytics_data")
+ANALYTICS_DIR = Path("/tmp/analytics_plots")
+DATA_DIR = Path("/tmp/analytics_data")
 ANALYTICS_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 
